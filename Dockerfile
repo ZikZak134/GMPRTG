@@ -1,7 +1,7 @@
-# Base image for Node.js and Python
-FROM node:18-slim AS base
+# Use Node.js 18 slim image
+FROM node:18-slim
 
-# Install Python and required dependencies
+# Install Python and system dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -9,19 +9,13 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
+# Set working directory
 WORKDIR /app
 
-# Setup Python environment first
-RUN python3 -m venv /app/venv
-ENV PATH="/app/venv/bin:$PATH"
-
-# Copy Python requirements and install
-COPY python-api/requirements.txt ./python-api/
-RUN pip install --no-cache-dir -r python-api/requirements.txt
+# Copy package files
+COPY package*.json ./
 
 # Install Node.js dependencies
-COPY package*.json ./
 RUN npm ci --only=production
 
 # Copy application code
@@ -30,19 +24,20 @@ COPY . .
 # Build Next.js application
 RUN npm run build
 
-# Create data directory for Telegram session
+# Create Python virtual environment and install dependencies
+RUN python3 -m venv /app/venv
+ENV PATH="/app/venv/bin:$PATH"
+
+# Install Python dependencies if requirements.txt exists
+RUN if [ -f "python-api/requirements.txt" ]; then \
+    pip install --no-cache-dir -r python-api/requirements.txt; \
+    fi
+
+# Create data directory
 RUN mkdir -p /app/data
-VOLUME /app/data
 
-# Install PM2 globally
-RUN npm install -g pm2
-
-# Copy PM2 configuration
-COPY ecosystem.config.js .
-
-# Expose ports
+# Expose port
 EXPOSE 3000
-EXPOSE 5000
 
-# Start the application with PM2
-CMD ["pm2-runtime", "start", "ecosystem.config.js"]
+# Start the application
+CMD ["npm", "start"]
