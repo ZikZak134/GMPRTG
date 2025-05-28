@@ -1,13 +1,8 @@
-# Use Node.js 18 slim image
-FROM node:18-slim
+# Use Node.js 18 Alpine for smaller size
+FROM node:18-alpine
 
-# Install Python and system dependencies
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Install dependencies for building native modules
+RUN apk add --no-cache libc6-compat
 
 # Set working directory
 WORKDIR /app
@@ -16,7 +11,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install Node.js dependencies (use npm install instead of npm ci)
-RUN npm install --production
+RUN npm install --frozen-lockfile
 
 # Copy application code
 COPY . .
@@ -36,8 +31,19 @@ RUN if [ -f "python-api/requirements.txt" ]; then \
 # Create data directory
 RUN mkdir -p /app/data
 
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Change ownership of the app directory
+RUN chown -R nextjs:nodejs /app
+USER nextjs
+
 # Expose port
 EXPOSE 3000
+
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
 
 # Start the application
 CMD ["npm", "start"]
