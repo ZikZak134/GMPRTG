@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import asyncio
-import json
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 import logging
@@ -22,12 +21,15 @@ SESSION_STRING = os.getenv('TELEGRAM_SESSION', '')
 # Global client variable
 client = None
 
+
 async def init_telegram_client():
     """Initialize Telegram client"""
     global client
     try:
         if SESSION_STRING:
-            client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+            client = TelegramClient(
+                StringSession(SESSION_STRING), API_ID, API_HASH
+            )
         else:
             client = TelegramClient('session', API_ID, API_HASH)
         
@@ -44,8 +46,11 @@ def health_check():
     return jsonify({
         'status': 'ok',
         'service': 'telegram-parser-api',
-        'client_connected': client is not None and client.is_connected() if client else False
+        'client_connected': (
+            client is not None and client.is_connected() if client else False
+        )
     })
+
 
 @app.route('/auth/status', methods=['GET'])
 def auth_status():
@@ -67,14 +72,21 @@ def auth_status():
             'error': str(e)
         }), 500
 
+
 @app.route('/channels/parse', methods=['POST'])
-def parse_channel():
+async def parse_channel():
     """Parse a Telegram channel"""
+    global client  # Ensure we are referring to the global client
+    if not client or not client.is_connected():
+        logger.warning(
+            "Attempt to parse channel while Telegram client is not connected."
+        )
+        return jsonify({'error': 'Client not connected.'}), 503
     try:
         data = request.get_json()
         channel_url = data.get('channel_url')
         limit = data.get('limit', 100)
-        
+
         if not channel_url:
             return jsonify({'error': 'Channel URL is required'}), 400
         
@@ -106,8 +118,8 @@ def parse_channel():
 def export_to_excel():
     """Export data to Excel format"""
     try:
-        data = request.get_json()
-        messages = data.get('messages', [])
+        # data = request.get_json() # F841 - data unused after messages commented
+        # messages = data.get('messages', []) # F841 - messages unused
         
         # Mock Excel export
         return jsonify({
@@ -120,14 +132,53 @@ def export_to_excel():
         logger.error(f"Error exporting to Excel: {e}")
         return jsonify({'error': str(e)}), 500
 
-if __name__ == '__main__':
-    # Initialize Telegram client if credentials are available
+def initialize_app_resources():
+    logger.info("Attempting to initialize application resources...")
     if API_ID and API_HASH:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(init_telegram_client())
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            global client
+            if client is None:
+                logger.info(
+                    "Telegram client not initialized. "
+                    "Proceeding with initialization."
+                )
+                try:
+                    asyncio.run(init_telegram_client())
+                except RuntimeError as e:
+                    logger.warning(
+                        "Asyncio.run failed: %s. Ensure Gunicorn uses "
+                        "compatible worker or manage loop manually.", e
+                    )
+                    current_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(current_loop)
+                    current_loop.run_until_complete(init_telegram_client())
+
+            else:
+                logger.info(
+                    "Telegram client already initialized or "
+                    "initialization attempted."
+                )
+        except Exception as e:
+            logger.error(f"Init err: {e}")  # Extremely short
     else:
-        logger.warning("Telegram API credentials not found. Running in mock mode.")
-    
+        logger.warning(
+            "Telegram API credentials not found. Client will not be "
+            "initialized. Running in mock mode."
+        )
+
+
+# Call this function when the module is loaded.
+initialize_app_resources()
+
+
+if __name__ == '__main__':
+    # Initialization is now handled by initialize_app_resources()
+    # called at module load. So, no need to call init_telegram_client()
+    # here again.
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
